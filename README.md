@@ -1,63 +1,18 @@
-# P2-ETF-TENSOR-NETWORK
+# Tensor Network Engine
 
-A tensor network approach for ETF (Exchange-Traded Fund) analysis and optimization.
+Implements Matrix Product State (MPS) / Tensor Train decomposition for ETF return prediction. Builds a 3‑order tensor (time × ETF features × macro features), compresses it via TT‑SVD, and uses the flattened cores as features in a linear regression to predict next‑day returns.
 
-## Overview
+- **TT rank:** 10 (compression level)
+- **Window:** 60 days
+- **Output:** top 3 ETFs per universe by predicted return
+- **Dashboard:** shows top ETFs and full ranking table
 
-This project implements tensor network methods for analyzing and processing ETF data structures, enabling efficient computation and analysis of multi-dimensional financial data.
+Runs daily on GitHub Actions.
 
-## Features
-
-- Tensor network construction and manipulation
-- ETF data processing and analysis
-- Optimization algorithms for tensor operations
-- Scalable computation framework
-
-## Installation
+## Local execution
 
 ```bash
-git clone https://github.com/P2SAMAPA/P2-ETF-TENSOR-NETWORK.git
-cd P2-ETF-TENSOR-NETWORK
-```
-
-## Usage
-
-```python
-# Example usage
-import your_module
-
-# Add your usage examples here
-```
-
-## Project Structure
-
-- `src/` - Source code
-- `tests/` - Test suite
-- `docs/` - Documentation
-- `examples/` - Example scripts
-
-## Requirements
-
-- Python 3.7+
-- NumPy
-- Additional dependencies listed in `requirements.txt`
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Author
-
-**P2SAMAPA**
-
-## Contact
-
-For questions or issues, please open an issue on the GitHub repository.
-
----
-
-*Last updated: 2026-05-16*
+pip install -r requirements.txt
+export HF_TOKEN=<your_token>
+python trainer.py
+streamlit run streamlit_app.py
