@@ -10,7 +10,6 @@ def safe_svd(mat, rank):
     try:
         U, s, Vh = np.linalg.svd(mat, full_matrices=False)
     except np.linalg.LinAlgError:
-        # Fallback to randomised SVD if standard fails
         from sklearn.utils.extmath import randomized_svd
         U, s, Vh = randomized_svd(mat, n_components=rank, random_state=42)
     # Truncate to desired rank
@@ -21,22 +20,24 @@ def tt_svd(tensor, rank):
     """
     Tensor Train decomposition using sequential SVD.
     """
-    d = tensor.ndim
+    shape = tensor.shape
+    d = len(shape)
     cores = []
     current = tensor
+    prev_rank = 1
     for i in range(d-1):
-        n = current.shape[0]
-        mat = current.reshape(n, -1)
+        # Reshape current to (prev_rank * shape[i], prod_{j>i} shape[j])
+        mat = current.reshape(prev_rank * shape[i], -1)
         U, s, Vh = safe_svd(mat, rank)
         r = len(s)
-        if i == 0:
-            core = U.reshape(1, n, r)
-        else:
-            core = U.reshape(cores[-1].shape[2], n, r)
+        # Reshape U to core: (prev_rank, shape[i], r)
+        core = U.reshape(prev_rank, shape[i], r)
         cores.append(core)
+        # Update for next iteration
         current = np.diag(s) @ Vh
-    # Last core
-    last_core = current.reshape(cores[-1].shape[2], -1, 1)
+        prev_rank = r
+    # Last core: current should be of shape (prev_rank, shape[-1], 1)
+    last_core = current.reshape(prev_rank, shape[-1], -1)
     cores.append(last_core)
     return cores
 
@@ -60,7 +61,7 @@ def build_tensor_for_etf(returns_df, macro_df, etf, window=60):
     macro = macro_df.iloc[-window:].values
     macro = np.nan_to_num(macro)
     T = np.einsum('ti,tj->tij', etf_features, macro)
-    T = T + 1e-8   # small constant to avoid all‑zero
+    T = T + 1e-8
     return T
 
 def train_tensor_predictor(returns_df, macro_df, tickers, window=60, rank=5):
