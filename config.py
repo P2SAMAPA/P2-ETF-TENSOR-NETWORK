@@ -17,11 +17,6 @@ UNIVERSES = {
     ]
 }
 
-# Rolling window for feature tensor (days)
 TENSOR_WINDOW = 60
-
-# Tensor train rank (compression level)
-TT_RANK = 10          # rank of the TT decomposition (higher = more accurate but slower)
-
-# For prediction: use linear regression on TT‑cores
+TT_RANK = 5            # reduced for stability
 TOP_N = 3
