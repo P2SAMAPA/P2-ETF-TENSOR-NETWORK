@@ -39,7 +39,7 @@ def main():
         # Predict next day return for each ETF
         predictions = {}
         for ticker in tickers:
-            pred = predict_next_return(models, returns, macro, ticker, config.TENSOR_WINDOW, config.TT_RANK)
+            pred = predict_next_return(models, returns, macro, ticker, config.TENSOR_WINDOW)   # <-- removed rank argument
             if not np.isnan(pred):
                 predictions[ticker] = pred
 
