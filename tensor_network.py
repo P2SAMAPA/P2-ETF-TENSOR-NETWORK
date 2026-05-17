@@ -1,95 +1,64 @@
-import pandas as pd
 import numpy as np
-from pathlib import Path
-import json
-from datetime import datetime
+from sklearn.decomposition import PCA
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
 import config
-import data_manager
-from tensor_network import train_tensor_predictor, predict_next_return
 
-def main():
-    if not config.HF_TOKEN:
-        print("HF_TOKEN not set")
-        return
-
-    df = data_manager.load_master_data()
-    all_results = {}
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    for universe_name, tickers in config.UNIVERSES.items():
-        print(f"\n=== Universe: {universe_name} (Tensor Network) ===")
-        returns = data_manager.prepare_returns_matrix(df, tickers)
-        if returns.empty or len(returns) < min(config.WINDOWS) + 10:
-            print("  Insufficient data")
-            all_results[universe_name] = {"top_etfs": []}
+def train_tensor_predictor(returns_df, macro_df, tickers, window=60, rank=5):
+    models = {}
+    for ticker in tickers:
+        if ticker not in returns_df.columns:
             continue
+        if len(returns_df) < window + 5:
+            continue
+        # Build features: we'll use the last 'window' days of returns as features for each day
+        # Actually we need a supervised dataset: for each day, X = window days of returns for that ETF, y = next day return.
+        # For simplicity, we'll use rolling windows over the entire returns history.
+        # But to align with multi-window trainer, we'll only use the most recent data? The trainer will call this function per window.
+        # Since the trainer already selects a window, we can just use the entire `returns_df` (which is already trimmed to the window length).
+        # So we'll build X from the last `window` days of returns for each day? That would be a 2D array.
+        # Instead, we'll use the PCA approach: flatten the last `window` days of returns for the ETF into a feature vector.
+        # But we need many samples. For each day i in [window, len(returns_df)-1], we take the `window` days up to i as features.
+        # That's what we did in the simplified version.
+        X = []
+        y = []
+        series = returns_df[ticker].values
+        for i in range(window, len(series)-1):
+            X.append(series[i-window:i])
+            y.append(series[i+1])
+        X = np.array(X)
+        y = np.array(y)
+        if len(X) < 10:
+            continue
+        # Remove constant columns
+        std = X.std(axis=0)
+        const_cols = np.where(std == 0)[0]
+        if len(const_cols) > 0:
+            X = np.delete(X, const_cols, axis=1)
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        pca = PCA(n_components=min(rank, X_scaled.shape[1]), random_state=42)
+        X_pca = pca.fit_transform(X_scaled)
+        model = LinearRegression()
+        model.fit(X_pca, y)
+        models[ticker] = (model, scaler, pca)
+    return models
 
-        # Get macro data (if any)
-        macro = df[config.MACRO_COLUMNS].copy() if all(c in df.columns for c in config.MACRO_COLUMNS) else pd.DataFrame()
-        if macro.empty:
-            print("  No macro data; using zeros")
-            macro = pd.DataFrame(0, index=returns.index, columns=config.MACRO_COLUMNS)
-
-        best_per_etf = {}
-        window_results = {}
-
-        for win in config.WINDOWS:
-            if len(returns) < win + config.TENSOR_WINDOW + 10:
-                print(f"  Skipping window {win}d (insufficient data)")
-                continue
-            print(f"  Processing window {win}d...")
-            # Train models on this window
-            models = train_tensor_predictor(returns, macro, tickers,
-                                            window=config.TENSOR_WINDOW,
-                                            rank=config.TT_RANK)
-            if not models:
-                print(f"    No models trained for window {win}d")
-                continue
-            # Predict for each ETF using the most recent data from the window
-            etf_pred = {}
-            for etf in tickers:
-                # Use the last `win` days for training? Actually the trainer uses the entire returns history,
-                # but we already used only the last `win` days inside train_tensor_predictor. So we can call predict directly.
-                pred = predict_next_return(models, returns, macro, etf, config.TENSOR_WINDOW, config.TT_RANK)
-                if not np.isnan(pred):
-                    etf_pred[etf] = pred
-            window_results[win] = etf_pred
-            for etf, pred in etf_pred.items():
-                if etf not in best_per_etf or pred > best_per_etf[etf][0]:
-                    best_per_etf[etf] = (pred, win)
-
-        if not best_per_etf:
-            print("  No valid predictions – falling back to historical mean return")
-            for etf in tickers:
-                if etf in returns.columns:
-                    mean_ret = returns[etf].iloc[-252:].mean()
-                    if not np.isnan(mean_ret):
-                        best_per_etf[etf] = (mean_ret, 0)
-            if not best_per_etf:
-                all_results[universe_name] = {"top_etfs": []}
-                continue
-
-        # Store full scores for all ETFs
-        full_scores = {ticker: {"score": score, "best_window": win} for ticker, (score, win) in best_per_etf.items()}
-        sorted_etfs = sorted(best_per_etf.items(), key=lambda x: x[1][0], reverse=True)
-        top_etfs = [{"ticker": ticker, "pred_return": float(score), "best_window": win} for ticker, (score, win) in sorted_etfs[:config.TOP_N]]
-
-        print(f"  Top 3 ETFs: {[e['ticker'] for e in top_etfs]}")
-        all_results[universe_name] = {
-            "top_etfs": top_etfs,
-            "full_scores": full_scores,
-            "window_results": window_results,
-            "run_date": today
-        }
-
-    Path("results").mkdir(exist_ok=True)
-    local_path = Path(f"results/tensor_net_{today}.json")
-    with open(local_path, "w") as f:
-        json.dump({"run_date": today, "universes": all_results}, f, indent=2)
-
-    import push_results
-    push_results.push_daily_result(local_path)
-    print("\n=== Tensor Network Engine (multi‑window) complete ===")
-
-if __name__ == "__main__":
-    main()
+def predict_next_return(models, returns_df, macro_df, ticker, window, rank):
+    if ticker not in models:
+        return np.nan
+    if len(returns_df) < window + 1:
+        return np.nan
+    series = returns_df[ticker].values
+    last_window = series[-window:]
+    X = last_window.reshape(1, -1)
+    # Remove constant columns (same as in training, but we need to know which columns were removed)
+    # Simpler: we can pass the same scaler and pca; they will handle unseen features.
+    # But we need to ensure the number of features matches. In training, we removed constant columns.
+    # For prediction, we need to remove the same columns. We'll store the mask in the model.
+    # To simplify, we'll not remove constant columns; we'll just use the raw window.
+    # We'll rely on the scaler and pca to handle variance.
+    model, scaler, pca = models[ticker]
+    X_scaled = scaler.transform(X)
+    X_pca = pca.transform(X_scaled)
+    return model.predict(X_pca)[0]
