@@ -24,8 +24,9 @@ def main():
             all_results[universe_name] = {"top_etfs": []}
             continue
 
-        # Get macro data (if any)
-        macro = df[config.MACRO_COLUMNS].copy() if all(c in df.columns for c in config.MACRO_COLUMNS) else pd.DataFrame()
+        # Get macro data (only columns that exist)
+        available_macro = [c for c in config.MACRO_COLUMNS if c in df.columns]
+        macro = df[available_macro].copy() if available_macro else pd.DataFrame()
         if macro.empty:
             print("  No macro data; using zeros")
             macro = pd.DataFrame(0, index=returns.index, columns=config.MACRO_COLUMNS)
@@ -35,11 +36,14 @@ def main():
 
         for win in config.WINDOWS:
             if len(returns) < win + config.TENSOR_WINDOW + 10:
-                print(f"  Skipping window {win}d (insufficient data)")
+                print(f"  Skipping window {win}d (insufficient data: need at least {win + config.TENSOR_WINDOW + 10} days)")
                 continue
             print(f"  Processing window {win}d...")
-            # Train models on this window
-            models = train_tensor_predictor(returns, macro, tickers,
+            # Train models on this window (using only the last `win` days of data)
+            # We'll slice returns and macro to the last `win` days
+            returns_win = returns.iloc[-win:]
+            macro_win = macro.iloc[-win:] if not macro.empty else pd.DataFrame(0, index=returns_win.index, columns=config.MACRO_COLUMNS)
+            models = train_tensor_predictor(returns_win, macro_win, tickers,
                                             window=config.TENSOR_WINDOW,
                                             rank=config.TT_RANK)
             if not models:
@@ -48,9 +52,7 @@ def main():
             # Predict for each ETF using the most recent data from the window
             etf_pred = {}
             for etf in tickers:
-                # Use the last `win` days for training? Actually the trainer uses the entire returns history,
-                # but we already used only the last `win` days inside train_tensor_predictor. So we can call predict directly.
-                pred = predict_next_return(models, returns, macro, etf, config.TENSOR_WINDOW, config.TT_RANK)
+                pred = predict_next_return(models, returns_win, macro_win, etf, config.TENSOR_WINDOW, config.TT_RANK)
                 if not np.isnan(pred):
                     etf_pred[etf] = pred
             window_results[win] = etf_pred
