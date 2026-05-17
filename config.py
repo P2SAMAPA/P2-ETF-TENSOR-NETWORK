@@ -17,6 +17,7 @@ UNIVERSES = {
     ]
 }
 
+WINDOWS = [63, 252, 504, 1008, 2016]
 TENSOR_WINDOW = 60
 TT_RANK = 5            # reduced for stability
 TOP_N = 3
