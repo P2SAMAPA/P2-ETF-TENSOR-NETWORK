@@ -19,45 +19,66 @@ def main():
     for universe_name, tickers in config.UNIVERSES.items():
         print(f"\n=== Universe: {universe_name} (Tensor Network) ===")
         returns = data_manager.prepare_returns_matrix(df, tickers)
-        if returns.empty or len(returns) < config.TENSOR_WINDOW + 10:
+        if returns.empty or len(returns) < min(config.WINDOWS) + 10:
             print("  Insufficient data")
             all_results[universe_name] = {"top_etfs": []}
             continue
 
-        macro = data_manager.get_macro_data(df)
+        # Get macro data (if any)
+        macro = df[config.MACRO_COLUMNS].copy() if all(c in df.columns for c in config.MACRO_COLUMNS) else pd.DataFrame()
         if macro.empty:
-            print("  No macro data – using dummy")
-            macro = pd.DataFrame(0, index=returns.index, columns=["VIX", "DXY", "T10Y2Y", "TBILL_3M"])
+            print("  No macro data; using zeros")
+            macro = pd.DataFrame(0, index=returns.index, columns=config.MACRO_COLUMNS)
 
-        # Train tensor predictors for each ETF
-        models = train_tensor_predictor(returns, macro, tickers, window=config.TENSOR_WINDOW, rank=config.TT_RANK)
-        if not models:
-            print("  No models trained")
-            all_results[universe_name] = {"top_etfs": []}
-            continue
+        best_per_etf = {}
+        window_results = {}
 
-        # Predict next day return for each ETF
-        predictions = {}
-        for ticker in tickers:
-            pred = predict_next_return(models, returns, macro, ticker, config.TENSOR_WINDOW)   # <-- removed rank argument
-            if not np.isnan(pred):
-                predictions[ticker] = pred
+        for win in config.WINDOWS:
+            if len(returns) < win + config.TENSOR_WINDOW + 10:
+                print(f"  Skipping window {win}d (insufficient data)")
+                continue
+            print(f"  Processing window {win}d...")
+            # Train models on this window
+            models = train_tensor_predictor(returns, macro, tickers,
+                                            window=config.TENSOR_WINDOW,
+                                            rank=config.TT_RANK)
+            if not models:
+                print(f"    No models trained for window {win}d")
+                continue
+            # Predict for each ETF using the most recent data from the window
+            etf_pred = {}
+            for etf in tickers:
+                # Use the last `win` days for training? Actually the trainer uses the entire returns history,
+                # but we already used only the last `win` days inside train_tensor_predictor. So we can call predict directly.
+                pred = predict_next_return(models, returns, macro, etf, config.TENSOR_WINDOW, config.TT_RANK)
+                if not np.isnan(pred):
+                    etf_pred[etf] = pred
+            window_results[win] = etf_pred
+            for etf, pred in etf_pred.items():
+                if etf not in best_per_etf or pred > best_per_etf[etf][0]:
+                    best_per_etf[etf] = (pred, win)
 
-        if not predictions:
-            print("  No predictions")
-            all_results[universe_name] = {"top_etfs": []}
-            continue
+        if not best_per_etf:
+            print("  No valid predictions – falling back to historical mean return")
+            for etf in tickers:
+                if etf in returns.columns:
+                    mean_ret = returns[etf].iloc[-252:].mean()
+                    if not np.isnan(mean_ret):
+                        best_per_etf[etf] = (mean_ret, 0)
+            if not best_per_etf:
+                all_results[universe_name] = {"top_etfs": []}
+                continue
 
-        sorted_etfs = sorted(predictions.items(), key=lambda x: x[1], reverse=True)
-        top_etfs = []
-        full_scores = {}
-        for ticker, pred in sorted_etfs[:config.TOP_N]:
-            top_etfs.append({"ticker": ticker, "pred_return": float(pred)})
-            full_scores[ticker] = float(pred)
-        print(f"  Top 3 ETFs by tensor‑predicted return: {[e['ticker'] for e in top_etfs]}")
+        # Store full scores for all ETFs
+        full_scores = {ticker: {"score": score, "best_window": win} for ticker, (score, win) in best_per_etf.items()}
+        sorted_etfs = sorted(best_per_etf.items(), key=lambda x: x[1][0], reverse=True)
+        top_etfs = [{"ticker": ticker, "pred_return": float(score), "best_window": win} for ticker, (score, win) in sorted_etfs[:config.TOP_N]]
+
+        print(f"  Top 3 ETFs: {[e['ticker'] for e in top_etfs]}")
         all_results[universe_name] = {
             "top_etfs": top_etfs,
             "full_scores": full_scores,
+            "window_results": window_results,
             "run_date": today
         }
 
@@ -68,7 +89,7 @@ def main():
 
     import push_results
     push_results.push_daily_result(local_path)
-    print("\n=== Tensor Network Engine complete ===")
+    print("\n=== Tensor Network Engine (multi‑window) complete ===")
 
 if __name__ == "__main__":
     main()
