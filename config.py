@@ -17,7 +17,14 @@ UNIVERSES = {
     ]
 }
 
+# Macro columns (adjust to your dataset)
+MACRO_COLUMNS = ["VIX", "DXY", "T10Y2Y", "TBILL_3M", "IG_SPREAD", "HY_SPREAD"]
+
+# Rolling windows for evaluation (days)
 WINDOWS = [63, 252, 504, 1008, 2016]
-TENSOR_WINDOW = 60
-TT_RANK = 5            # reduced for stability
+
+# Tensor train parameters
+TENSOR_WINDOW = 60   # window for building the tensor
+TT_RANK = 5          # rank for TT‑SVD (or PCA reduction)
+
 TOP_N = 3
