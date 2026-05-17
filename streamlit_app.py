@@ -18,13 +18,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.markdown('<div class="main-header">🌀 Tensor Network Engine</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Matrix Product State (MPS) / Tensor Train decomposition | Entanglement‑aware feature compression | Next‑day return prediction</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Tensor Train decomposition | Multi‑window evaluation | Best window per ETF</div>', unsafe_allow_html=True)
 
 st.sidebar.markdown("## 🌀 Tensor Network")
 st.sidebar.markdown(f"**Run Date:** `{st.session_state.get('run_date', 'Not loaded')}`")
 st.sidebar.markdown(f"**Next Trading Day:** `{next_trading_day()}`")
 st.sidebar.markdown(f"**TT rank:** {config.TT_RANK}")
-st.sidebar.markdown(f"**Window:** {config.TENSOR_WINDOW} days")
+st.sidebar.markdown("**Windows evaluated:** 63, 252, 504, 1008, 2016 days (best per ETF)")
 
 OUTPUT_REPO = config.OUTPUT_REPO
 HF_TOKEN = config.HF_TOKEN
@@ -68,7 +68,7 @@ if "error" in data:
 st.session_state['run_date'] = data['run_date']
 universes = data["universes"]
 
-st.header("🏆 Top ETFs by Tensor‑Compressed Predicted Return")
+st.header("🏆 Top ETFs by Tensor‑Compressed Predicted Return (Best Window)")
 
 for universe_name, uni_data in universes.items():
     top_etfs = uni_data.get("top_etfs", [])
@@ -81,15 +81,27 @@ for universe_name, uni_data in universes.items():
             st.markdown(f"""
             <div class="etf-card">
                 <div class="etf-ticker">{etf['ticker']}</div>
-                <div class="etf-score">pred return = {etf['pred_return']:.4f}</div>
+                <div class="etf-score">pred return = {etf['pred_return']:.6f}</div>
+                <div class="etf-score">best window = {etf.get('best_window', 'N/A')}d</div>
             </div>
             """, unsafe_allow_html=True)
-    with st.expander("📋 Full ranking (all ETFs)"):
+    with st.expander("📋 Full ranking (all ETFs, best window per ETF)"):
         full = uni_data.get("full_scores", {})
         if full:
-            df = pd.DataFrame(list(full.items()), columns=["ETF", "Predicted Return"])
-            df = df.sort_values("Predicted Return", ascending=False)
+            rows = []
+            for ticker, info in full.items():
+                if isinstance(info, dict):
+                    score = info.get("score", 0.0)
+                    win = info.get("best_window", "N/A")
+                else:
+                    score = info
+                    win = "N/A"
+                rows.append({"ETF": ticker, "Best Predicted Return": score, "Best Window": win})
+            df = pd.DataFrame(rows).sort_values("Best Predicted Return", ascending=False)
+            # Convert score to numeric to avoid sorting issues
+            df["Best Predicted Return"] = pd.to_numeric(df["Best Predicted Return"], errors='coerce')
+            df = df.dropna(subset=["Best Predicted Return"]).sort_values("Best Predicted Return", ascending=False)
             st.dataframe(df, use_container_width=True, hide_index=True)
     st.divider()
 
-st.caption("A 3‑order tensor (time × ETF features × macro features) is compressed via Tensor Train decomposition (TT‑SVD). The flattened TT‑cores are used as features in a linear regression to predict next‑day return. Higher predicted return → stronger long signal.")
+st.caption("A 3‑order tensor (time × ETF features × macro features) is compressed via Tensor Train decomposition (or PCA). The flattened cores are used in ridge regression to predict next‑day returns. For each ETF, the window that yields the highest predicted return is selected. Higher predicted return → stronger long signal.")
