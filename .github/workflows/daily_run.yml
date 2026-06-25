@@ -2,7 +2,7 @@ name: Daily Tensor Network Run
 
 on:
   schedule:
-    - cron: '15 02 * * 1-6'
+    - cron: '15 00 * * 1-6'
   workflow_dispatch:
 
 jobs:
